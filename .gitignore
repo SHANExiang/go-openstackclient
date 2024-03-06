@@ -1,0 +1,12 @@
+.DS_Store
+vendor/*/
+*.log
+swagger.json
+swagger.yaml
+docs/*
+logs/*
+/mock_service/*
+docs/swagger*
+.project
+.idea
+.idea/*
