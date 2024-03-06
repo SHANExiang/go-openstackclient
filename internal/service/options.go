@@ -196,3 +196,14 @@ func constructCreateSnapshotRequestOpts(opts entity.CreateUpdateOptions, extraOp
 		Headers: map[string]string{consts.AuthToken: defaultController.Token()},
 	}
 }
+
+func constructBandwidthLimitRuleRequestOpts(opts entity.CreateUpdateOptions, extraOption *ExtraOption) RequestOption {
+	return RequestOption{
+		Action: CREATE,
+		Resource: consts.BANDWIDTH_LIMIT_RULE,
+		ResourceLocation: fmt.Sprintf("qos/policies/%s/bandwidth_limit_rules", extraOption.ParentID),
+		RequestSuffix: "",
+		Body: opts,
+		Headers: map[string]string{consts.AuthToken: defaultController.Token()},
+	}
+}

@@ -42,6 +42,7 @@ const (
     PORTS                      = "ports"
     QOS_POLICIES               = "qos_policies"
     QOS_POLICY                 = "qos_policy"
+    POLICY                     = "policy"
     BANDWIDTH_LIMIT_RULES      = "bandwidth_limit_rules"
     BANDWIDTH_LIMIT_RULE       = "bandwidth_limit_rule"
     DSCP_MARKING_RULES         = "dscp_marking_rules"

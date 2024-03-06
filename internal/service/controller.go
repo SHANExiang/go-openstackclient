@@ -29,11 +29,12 @@ type Controller struct {
 	neutron           *Neutron
 	keystone          *Keystone
 	nova              *Nova
+	cinder            *Cinder
 	token             string
 	projectName       string
 	projectID         string
 	DeleteChannels    map[string]chan Output
-	mu                syns.Mutex
+	mu                sync.Mutex
 }
 
 func NewController(projectName string) *Controller {
@@ -145,6 +146,8 @@ func (s *Controller) targetService(option RequestOption) Service {
 		return s.keystone
 	} else if _, ok = s.Nova().SupportedResources()[option.Resource]; ok {
 		return s.nova
+	} else if _, ok = s.Cinder().SupportedResources()[option.Resource]; ok {
+		return s.cinder
 	} else {
 		return nil
 	}
@@ -171,6 +174,13 @@ func (s *Controller) Keystone() *Keystone {
 	return s.keystone
 }
 
+func (s *Controller) Cinder() *Cinder {
+	if s.cinder == nil {
+		s.cinder = newCinder()
+	}
+	return s.cinder
+}
+
 func (s *Controller) actionMapMethod(action string) string {
 	if method, ok := actionMapMethod[action]; ok {
 		return method
@@ -190,168 +200,23 @@ func (s *Controller) getEndpoint(option RequestOption) string {
 
 
 func (s *Controller) MakeDeleteChannel(resourceType string, length int) chan Output {
-	defer s.mu.Unlock()
 	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	s.DeleteChannels[resourceType] = make(chan Output, length)
 	return s.DeleteChannels[resourceType]
 }
 
-func (s *Controller) CreateNetwork(opts entity.CreateUpdateOptions) string {
+// network
+
+func (s *Controller) CreateNetwork(opts entity.CreateUpdateOptions) entity.NetworkMap {
 	res := wrapper(constructNetworkRequestOpts)(opts, nil)
 	defer fasthttp.ReleaseResponse(res)
 	var network entity.NetworkMap
 	_ = json.Unmarshal(res.Body(), &network)
 
 	log.Println("==============Create internal network success", network.Network.Id)
-	return network.Id
-}
-
-func (s *Controller) CreateSubnet(opts entity.CreateUpdateOptions) string {
-	res := wrapper(constructSubnetRequestOpts)(opts, nil)
-	defer fasthttp.ReleaseResponse(res)
-	var subnet entity.SubnetMap
-	_ = json.Unmarshal(res.Body(), &subnet)
-
-	log.Println("==============Create internal subnet success", subnet.Id)
-	return subnet.Id
-}
-
-func (s *Controller) CreateSecurityGroup(opts entity.CreateUpdateOptions) string {
-	res := wrapper(constructSgRequestOpts)(opts, nil)
-	defer fasthttp.ReleaseResponse(res)
-
-	var sg entity.Sg
-	_ = json.Unmarshal(res.Body(), &sg)
-
-	log.Println("==============Create security group success", sg.Id)
-	return sg.Id
-}
-
-func (s *Controller) CreateSecurityRule(opts entity.CreateUpdateOptions) {
-	res := wrapper(constructSgRuleRequestOpts)(opts, nil)
-	defer fasthttp.ReleaseResponse(res)
-
-	var sgRule entity.SgRule
-	_ = json.Unmarshal(res.Body(), &sgRule)
-
-	log.Println("==============Create security group rule success", sgRule.Id)
-}
-
-func (s *Controller) CreatePort(opts entity.CreateUpdateOptions) {
-	res := wrapper(constructPortRequestOpts)(opts, nil)
-	defer fasthttp.ReleaseResponse(res)
-
-	var port entity.PortMap
-	_ = json.Unmarshal(res.Body(), &port)
-
-	log.Println("==============Create internal port success", port.Id)
-}
-
-func (s *Controller) CreateRouter(opts entity.CreateUpdateOptions) string {
-	res := wrapper(constructRouterRequestOpts)(opts, nil)
-	defer fasthttp.ReleaseResponse(res)
-
-	var router entity.RouterMap
-	_ = json.Unmarshal(res.Body(), &router)
-
-	log.Println("==============Create router success", router.Id)
-	return router.Id
-}
-
-func (s *Controller) SetRouterGateway(opts entity.CreateUpdateOptions, extraOption *ExtraOption) {
-	res := wrapper(constructSetRouterGatewayRequestOpts)(opts, extraOption)
-	defer fasthttp.ReleaseResponse(res)
-
-	var router entity.RouterMap
-	_ = json.Unmarshal(res.Body(), &router)
-
-	log.Println("==============Set router gateway success", router.Id)
-}
-
-func (s *Controller) AddRouterInterface(opts entity.CreateUpdateOptions) {
-	res := wrapper(constructRouterInterfaceRequestOpts)(opts, nil)
-	defer fasthttp.ReleaseResponse(res)
-
-	var routerInterface entity.RouterInterface
-	_ = json.Unmarshal(res.Body(), &routerInterface)
-
-	log.Println("==============Add router interface success")
-}
-
-
-func (s *Controller) makeSureInstanceActive(instanceId string) {
-	instance := GetInstanceDetail(instanceId)
-	if instance == nil {
-		time.Sleep(2 * time.Second)
-		for instance == nil {
-			instance = GetInstanceDetail(instanceId)
-			time.Sleep(2 * time.Second)
-		}
-	}
-	timeout := 2 * 60 * time.Second
-	done := make(chan bool, 1)
-	go func() {
-		state := instance.Server.Status
-		for state != "ACTIVE" {
-			time.Sleep(10 * time.Second)
-			instance = GetInstanceDetail(instanceId)
-			state =instance.Server.Status
-		}
-		done <- true
-	}()
-	select {
-	case <-done:
-		log.Println("*******************Create instance success")
-	case <-time.After(timeout):
-		log.Println("*******************Create instance timeout")
-	}
-}
-
-func (s *Controller) CreateInstance(opts entity.CreateUpdateOptions) string {
-	res := wrapper(constructInstanceRequestOpts)(opts, nil)
-	defer fasthttp.ReleaseResponse(res)
-
-	var server entity.ServerMap
-	_ = json.Unmarshal(res.Body(), &server)
-	makeSureInstanceActive(server.Id)
-	return server.Id
-}
-
-func (s *Controller) GetInstanceDetail(instanceId string) *entity.ServerMap {
-	res := wrapper(constructListRequestOpts)(nil, &ExtraOption{
-		ParentID: "", Resource: consts.SERVER,
-		ResourceLocation: fmt.Sprintf("%s/%s", consts.SERVERS, instanceId),
-		ResourceSuffix: ""})
-	defer fasthttp.ReleaseResponse(res)
-
-	var server entity.ServerMap
-	_ = json.Unmarshal(res.Body(), &server)
-	log.Println("==============List server success", string(res.Body()))
-	return &server
-}
-
-
-func (s *Controller) GetSgsByName(sgName string) *entity.Sgs {
-	res := wrapper(constructListRequestOpts)(nil, &ExtraOption{
-		ParentID: "", Resource: consts.SECURITYGROUP,
-		ResourceLocation: strings.Replace(consts.SECURITYGROUPS, "_", "-", 1),
-		ResourceSuffix: fmt.Sprintf("name=%s", sgName)})
-	defer fasthttp.ReleaseResponse(res)
-
-	var sgs entity.Sgs
-	_ = json.Unmarshal(res.Body(), &sgs)
-	log.Println("==============List sgs success", sgs)
-	return &sgs
-}
-
-func (s *Controller) EnsureSgExist(sgName string) {
-	sgs := GetSgsByName(sgName)
-	if len(sgs.Sgs) == 0 {
-		sgId := CreateSecurityGroupHelper()
-		CreateSecurityRuleICMP(sgId)
-		CreateSecurityRuleSSH(sgId)
-	}
+	return network
 }
 
 func (s *Controller) ListNetworks() entity.Networks {
@@ -361,7 +226,7 @@ func (s *Controller) ListNetworks() entity.Networks {
 	}
 	resp := wrapper(constructListRequestOpts)(nil, &ExtraOption{
 		Resource: consts.NETWORK, ResourceLocation: consts.NETWORKS,
-	    ResourceSuffix: urlSuffix})
+		ResourceSuffix: urlSuffix})
 	defer fasthttp.ReleaseResponse(resp)
 
 	var networks entity.Networks
@@ -405,6 +270,18 @@ func (s *Controller) DeleteNetworks() {
 		for len(ch) != cap(ch) {}
 	}
 	log.Println("Networks were deleted completely")
+}
+
+// subnet
+
+func (s *Controller) CreateSubnet(opts entity.CreateUpdateOptions) entity.SubnetMap {
+	res := wrapper(constructSubnetRequestOpts)(opts, nil)
+	defer fasthttp.ReleaseResponse(res)
+	var subnet entity.SubnetMap
+	_ = json.Unmarshal(res.Body(), &subnet)
+
+	log.Println("==============Create internal subnet success", subnet.Id)
+	return subnet
 }
 
 
@@ -462,7 +339,481 @@ func (s *Controller) DeleteSubnets() {
 	log.Println("Subnets were deleted completely")
 }
 
-//port
+// security group
+
+func (s *Controller) CreateSecurityGroup(opts entity.CreateUpdateOptions) entity.Sg {
+	res := wrapper(constructSgRequestOpts)(opts, nil)
+	defer fasthttp.ReleaseResponse(res)
+
+	var sg entity.Sg
+	_ = json.Unmarshal(res.Body(), &sg)
+
+	log.Println("==============Create security group success", sg.Id)
+	return sg.Id
+}
+
+
+func (s *Controller) GetSgsByName(sgName string) *entity.Sgs {
+	res := wrapper(constructListRequestOpts)(nil, &ExtraOption{
+		ParentID: "", Resource: consts.SECURITYGROUP,
+		ResourceLocation: strings.Replace(consts.SECURITYGROUPS, "_", "-", 1),
+		ResourceSuffix: fmt.Sprintf("name=%s", sgName)})
+	defer fasthttp.ReleaseResponse(res)
+
+	var sgs entity.Sgs
+	_ = json.Unmarshal(res.Body(), &sgs)
+	log.Println("==============List sgs success", sgs)
+	return &sgs
+}
+
+func (s *Controller) EnsureSgExist(sgName string) {
+	sgs := s.GetSgsByName(sgName)
+	if len(sgs.Sgs) == 0 {
+		sgId := CreateSecurityGroupHelper()
+		CreateSecurityRuleICMP(sgId)
+		CreateSecurityRuleSSH(sgId)
+	}
+}
+
+func (s *Controller) getSecurityGroup(sgId string) interface{} {
+	urlSuffix := fmt.Sprintf("security-groups/%s", sgId)
+	resp := wrapper(constructListRequestOpts)(nil, &ExtraOption{
+		Resource: consts.SECURITYGROUP, ResourceLocation: urlSuffix})
+	defer fasthttp.ReleaseResponse(resp)
+
+	var sg entity.Sg
+	_ = json.Unmarshal(resp.Body(), &sg)
+	log.Println(fmt.Sprintf("get sg==%+v", sg))
+	return sg
+}
+
+
+func (s *Controller) listSecurityGroups() entity.Sgs {
+	urlSuffix := fmt.Sprintf("project_id=%s", s.projectID)
+	resp := wrapper(constructListRequestOpts)(nil, &ExtraOption{
+		Resource: consts.SECURITYGROUP, ResourceLocation: consts.SECURITYGROUPS,
+		ResourceSuffix: urlSuffix})
+	defer fasthttp.ReleaseResponse(resp)
+
+	var sgs entity.Sgs
+	_ = json.Unmarshal(resp.Body(), &sgs)
+	log.Println("==============List sg success, there had", len(sgs.Sgs))
+	return sgs
+}
+
+func (s *Controller) deleteSecurityGroup(id string) Output {
+	outputObj := Output{ParametersMap: map[string]string{"security_group_id": id}}
+	defer func() {
+		if err := recover(); err != nil {
+			log.Println("catch error：", err)
+			outputObj.Success = false
+			outputObj.Response = err
+		}
+	}()
+
+	resp := wrapper(constructDeleteRequestOpts)(nil, &ExtraOption{
+		Resource: consts.SECURITYGROUP,
+		ResourceLocation: fmt.Sprintf("%s/%s", strings.Replace(consts.SECURITYGROUPS, "_", "-", 1), id)})
+	defer fasthttp.ReleaseResponse(resp)
+
+	outputObj.Response = resp.StatusCode()
+	if resp.StatusCode() == fasthttp.StatusOK {
+		outputObj.Success = true
+	}
+	return outputObj
+}
+
+func (s *Controller) DeleteSecurityGroups() {
+	sgs := s.listSecurityGroups()
+	ch := s.MakeDeleteChannel(consts.SECURITYGROUP, len(sgs.Sgs))
+	for _, sg := range sgs.Sgs {
+		tempSg := sg
+		go func() {
+			ch <- s.deleteSecurityGroup(tempSg.Id)
+		}()
+	}
+	if len(ch) != cap(ch) {
+		for len(ch) != cap(ch) {}
+	}
+	log.Println("Security groups were deleted completely")
+}
+
+
+// security group rule
+
+func (s *Controller) listSecurityGroupRules() entity.SgRules {
+	urlSuffix := fmt.Sprintf("project_id=%s", s.projectID)
+	resp := wrapper(constructListRequestOpts)(nil, &ExtraOption{
+		Resource: consts.SECURITYGROUPRULE, ResourceLocation: consts.SECURITYGROUPRULES,
+		ResourceSuffix: urlSuffix})
+	defer fasthttp.ReleaseResponse(resp)
+
+	var sgRules entity.SgRules
+	_ = json.Unmarshal(resp.Body(), &sgRules)
+
+	log.Println("==============List sg rule success, there had", len(sgRules.Srs))
+	return sgRules
+}
+
+func (s *Controller) deleteSecurityGroupRule(id string) Output {
+	outputObj := Output{ParametersMap: map[string]string{"security_group_id": id}}
+	defer func() {
+		if err := recover(); err != nil {
+			log.Println("catch error：", err)
+			outputObj.Success = false
+			outputObj.Response = err
+		}
+	}()
+
+	urlSuffix := fmt.Sprintf("security-group-rules/%s", id)
+	resp := wrapper(constructListRequestOpts)(nil, &ExtraOption{
+		Resource: consts.SECURITYGROUPRULE, ResourceLocation: urlSuffix})
+	defer fasthttp.ReleaseResponse(resp)
+
+	outputObj.Response = resp.StatusCode()
+	if resp.StatusCode() == fasthttp.StatusOK {
+		outputObj.Success = true
+	}
+	return outputObj
+}
+
+func (s *Controller) DeleteSecurityGroupRules() {
+	sgRules := s.listSecurityGroupRules()
+	ch := s.MakeDeleteChannel(consts.SECURITYGROUPRULE, len(sgRules.Srs))
+	for _, sgRule := range sgRules.Srs {
+		tempSgRule := sgRule
+		go func() {
+			ch <- s.deleteSecurityGroupRule(tempSgRule.Id)
+		}()
+	}
+	if len(ch) != cap(ch) {
+		for len(ch) != cap(ch) {}
+	}
+	log.Println("Security group rules were deleted completely")
+}
+
+func (s *Controller) CreateSecurityRule(opts entity.CreateUpdateOptions) {
+	res := wrapper(constructSgRuleRequestOpts)(opts, nil)
+	defer fasthttp.ReleaseResponse(res)
+
+	var sgRule entity.SgRule
+	_ = json.Unmarshal(res.Body(), &sgRule)
+
+	log.Println("==============Create security group rule success", sgRule.Id)
+}
+
+// router
+
+func (s *Controller) CreateRouter(opts entity.CreateUpdateOptions) entity.RouterMap {
+	res := wrapper(constructRouterRequestOpts)(opts, nil)
+	defer fasthttp.ReleaseResponse(res)
+
+	var router entity.RouterMap
+	_ = json.Unmarshal(res.Body(), &router)
+
+	log.Println("==============Create router success", router.Id)
+	return router
+}
+
+func (s *Controller) SetRouterGateway(opts entity.CreateUpdateOptions, routerId string) entity.RouterMap {
+	res := wrapper(constructSetRouterGatewayRequestOpts)(opts, &ExtraOption{ParentID: routerId})
+	defer fasthttp.ReleaseResponse(res)
+
+	var router entity.RouterMap
+	_ = json.Unmarshal(res.Body(), &router)
+
+	log.Println("==============Set router gateway success", router.Id)
+	return router
+}
+
+func (s *Controller) AddRouterInterface(opts entity.CreateUpdateOptions) {
+	res := wrapper(constructRouterInterfaceRequestOpts)(opts, nil)
+	defer fasthttp.ReleaseResponse(res)
+
+	var routerInterface entity.RouterInterface
+	_ = json.Unmarshal(res.Body(), &routerInterface)
+
+	log.Println("==============Add router interface success")
+}
+
+func (s *Controller) RemoveRouterInterface(routerId, subnetId string) Output {
+	outputObj := Output{ParametersMap: map[string]string{"router_id": routerId, "subnetId": subnetId}}
+	defer func() {
+		if err := recover(); err != nil {
+			log.Println("catch error：", err)
+			outputObj.Success = false
+			outputObj.Response = err
+			log.Println("==============Remove router interface failed")
+		} else {
+			log.Println("==============Remove router interface success")
+		}
+	}()
+	urlSuffix := fmt.Sprintf("routers/%s/remove_router_interface", routerId)
+	resp := wrapper(constructRouterInterfaceRequestOpts)(
+		defaultRouterInterfaceOpts(routerId, subnetId), &ExtraOption{
+			Resource: consts.ROUTER, ResourceLocation: urlSuffix})
+	defer fasthttp.ReleaseResponse(resp)
+
+	outputObj.Response = resp.Body()
+	outputObj.Success = true
+	return outputObj
+}
+
+func (s *Controller) DeleteRouterInterfaces() {
+	interfacePorts := s.listRouterInterfacePorts()
+	ch := s.MakeDeleteChannel(consts.ROUTERINTERFACE, len(interfacePorts.Ps))
+
+	for _, port := range interfacePorts.Ps {
+		routerId := port.DeviceId
+		fixedIps := port.FixedIps
+		for _, fixedIp := range fixedIps {
+			tempFixedIp := fixedIp
+			go func() {
+				ch <- s.RemoveRouterInterface(routerId, tempFixedIp.SubnetId)
+			}()
+		}
+	}
+	if len(ch) != cap(ch) {
+		for len(ch) != cap(ch) {}
+	}
+	log.Println("Router interfaces were deleted completely")
+}
+
+func (s *Controller) ListRouters() entity.Routers {
+	var urlSuffix = ""
+	if s.projectName != consts.ADMIN {
+		urlSuffix = fmt.Sprintf("project_id=%s", s.projectID)
+	}
+	resp := wrapper(constructListRequestOpts)(nil, &ExtraOption{
+		Resource: consts.ROUTER, ResourceLocation: consts.ROUTERS, ResourceSuffix: urlSuffix})
+	defer fasthttp.ReleaseResponse(resp)
+
+	var routers entity.Routers
+	_ = json.Unmarshal(resp.Body(), &routers)
+	log.Println("==============List routers success, there had", routers.Count)
+	return routers
+}
+
+func (s *Controller) listRouterInterfacePorts() entity.Ports {
+	urlSuffix := fmt.Sprintf("device_owner=network:router_interface&project_id=%s", s.projectID)
+	resp := wrapper(constructListRequestOpts)(nil, &ExtraOption{
+		Resource: consts.ROUTERINTERFACE, ResourceLocation: consts.PORTS,
+		ResourceSuffix: urlSuffix})
+	defer fasthttp.ReleaseResponse(resp)
+
+	var ports entity.Ports
+	_ = json.Unmarshal(resp.Body(), &ports)
+	log.Println("==============List router interface port success, there had", ports.Count)
+	return ports
+}
+
+
+func (s *Controller) updateRouterNoRoutes(id string) Output {
+	outputObj := Output{ParametersMap: map[string]string{"router_id": id}}
+	defer func() {
+		if err := recover(); err != nil {
+			log.Println("catch error：", err)
+			outputObj.Success = false
+			outputObj.Response = err
+		}
+	}()
+
+	opts := &entity.UpdateRouterOpts{Routes: new([]entity.Route)}
+	resp := wrapper(constructRouterRequestOpts)(opts, &ExtraOption{
+		Resource: consts.ROUTER, ResourceLocation: fmt.Sprintf("%s/%s", consts.ROUTERS, id)})
+	defer fasthttp.ReleaseResponse(resp)
+
+	outputObj.Response = ""
+	outputObj.Success = true
+	return outputObj
+}
+
+func (s *Controller) DeleteRouterRoutes() {
+	routers := s.ListRouters()
+	length := 0
+	for _, router := range routers.Rs {
+		if len(router.Routes) != 0 {
+			length++
+		}
+
+	}
+	ch := s.MakeDeleteChannel(consts.ROUTERROUTE, length)
+
+	for _, router := range routers.Rs {
+		if len(router.Routes) != 0 {
+			go func() {
+				ch <- s.updateRouterNoRoutes(router.Id)
+			}()
+		}
+	}
+	if len(ch) != cap(ch) {
+		for len(ch) != cap(ch) {}
+	}
+	log.Println("Router routes were deleted completely")
+}
+
+func (s *Controller) DeleteRouter(routerId string) Output {
+	outputObj := Output{ParametersMap: map[string]string{"router_id": routerId}}
+	defer func() {
+		if err := recover(); err != nil {
+			log.Println("catch error：", err)
+			outputObj.Success = false
+			outputObj.Response = err
+			log.Println("==============Delete router failed", routerId)
+		} else {
+			log.Println("==============Delete router success", routerId)
+		}
+	}()
+
+	urlSuffix := fmt.Sprintf("%s/%s", consts.ROUTERS, routerId)
+	resp := wrapper(constructDeleteRequestOpts)(nil, &ExtraOption{
+		Resource: consts.ROUTER, ResourceLocation: urlSuffix})
+	defer fasthttp.ReleaseResponse(resp)
+
+	outputObj.Response = resp.StatusCode()
+	if resp.StatusCode() == fasthttp.StatusOK {
+		outputObj.Success = true
+	}
+	return outputObj
+}
+
+func (s *Controller) DeleteRouters() {
+	routers := s.ListRouters()
+	ch := s.MakeDeleteChannel(consts.ROUTER, len(routers.Rs))
+	for _, router := range routers.Rs {
+		tempRouter := router
+		go func() {
+			ch <- s.DeleteRouter(tempRouter.Id)
+		}()
+	}
+	if len(ch) != cap(ch) {
+		for len(ch) != cap(ch) {}
+	}
+	log.Println("Routers were deleted completely")
+}
+
+func (s *Controller) ClearRouterGateway(routerId, extNetId string) Output {
+	outputObj := Output{ParametersMap: map[string]string{"router_id": routerId, "ext_net_id": extNetId}}
+	defer func() {
+		if err := recover(); err != nil {
+			log.Println("catch error：", err)
+			outputObj.Success = false
+			outputObj.Response = err
+		}
+	}()
+	urlSuffix := fmt.Sprintf("routers/%s", routerId)
+	opts := &entity.UpdateRouterOpts{
+		GatewayInfo: &entity.GatewayInfo{}}
+
+	resp := wrapper(constructRouterRequestOpts)(opts, &ExtraOption{
+		ParentID: routerId, Resource: consts.ROUTER, ResourceLocation: urlSuffix})
+	defer fasthttp.ReleaseResponse(resp)
+
+	outputObj.Success = true
+	outputObj.Response = ""
+	log.Println("==============Clear router gateway success, router", routerId)
+	return outputObj
+}
+
+func (s *Controller) DeleteRouterGateways() {
+	routers := s.ListRouters()
+	var length int
+	for _, router := range routers.Rs {
+		if !reflect.DeepEqual(router.GatewayInfo, nil) {
+			length++
+		}
+	}
+	ch := s.MakeDeleteChannel(consts.ROUTERGATEWAY, length)
+	for _, router := range routers.Rs {
+		if !reflect.DeepEqual(router.GatewayInfo, nil) {
+			go func() {
+				ch <- s.ClearRouterGateway(router.Id, router.GatewayInfo.NetworkID)
+			}()
+		}
+	}
+	if len(ch) != cap(ch) {
+		for len(ch) != cap(ch) {}
+	}
+	log.Println("Router gateways were deleted completely")
+}
+
+func (s *Controller) GetRouter(routerId string) entity.RouterMap {
+	urlSuffix := fmt.Sprintf("routers/%s", routerId)
+	resp := wrapper(constructListRequestOpts)(nil, &ExtraOption{
+		Resource: consts.ROUTER, ResourceLocation: urlSuffix})
+	defer fasthttp.ReleaseResponse(resp)
+
+	var router entity.RouterMap
+	_ = json.Unmarshal(resp.Body(), &router)
+	log.Println("==============Get router success", routerId)
+	return router
+}
+
+// server
+
+func (s *Controller) makeSureInstanceActive(instanceId string) {
+	instance := s.GetInstanceDetail(instanceId)
+	if instance == nil {
+		time.Sleep(2 * time.Second)
+		for instance == nil {
+			instance = s.GetInstanceDetail(instanceId)
+			time.Sleep(2 * time.Second)
+		}
+	}
+	timeout := 2 * 60 * time.Second
+	done := make(chan bool, 1)
+	go func() {
+		state := instance.Server.Status
+		for state != "ACTIVE" {
+			time.Sleep(10 * time.Second)
+			instance = s.GetInstanceDetail(instanceId)
+			state =instance.Server.Status
+		}
+		done <- true
+	}()
+	select {
+	case <-done:
+		log.Println("*******************Create instance success")
+	case <-time.After(timeout):
+		log.Println("*******************Create instance timeout")
+	}
+}
+
+func (s *Controller) CreateInstance(opts entity.CreateUpdateOptions) entity.ServerMap {
+	res := wrapper(constructInstanceRequestOpts)(opts, nil)
+	defer fasthttp.ReleaseResponse(res)
+
+	var server entity.ServerMap
+	_ = json.Unmarshal(res.Body(), &server)
+	s.makeSureInstanceActive(server.Id)
+	return server
+}
+
+func (s *Controller) GetInstanceDetail(instanceId string) *entity.ServerMap {
+	res := wrapper(constructListRequestOpts)(nil, &ExtraOption{
+		ParentID: "", Resource: consts.SERVER,
+		ResourceLocation: fmt.Sprintf("%s/%s", consts.SERVERS, instanceId),
+		ResourceSuffix: ""})
+	defer fasthttp.ReleaseResponse(res)
+
+	var server entity.ServerMap
+	_ = json.Unmarshal(res.Body(), &server)
+	log.Println("==============List server success", string(res.Body()))
+	return &server
+}
+
+// port
+
+func (s *Controller) CreatePort(opts entity.CreateUpdateOptions) entity.PortMap {
+	res := wrapper(constructPortRequestOpts)(opts, nil)
+	defer fasthttp.ReleaseResponse(res)
+
+	var port entity.PortMap
+	_ = json.Unmarshal(res.Body(), &port)
+
+	log.Println("==============Create internal port success", port.Id)
+	return port
+}
 
 func (s *Controller) GetPort(portId string) entity.PortMap {
 	urlSuffix := fmt.Sprintf("ports/%s", portId)
@@ -535,230 +886,6 @@ func (s *Controller) DeletePorts() {
 	log.Println("Ports were deleted completely")
 }
 
-// router
-
-func (s *Controller) RemoveRouterInterface(routerId, subnetId string) Output {
-	outputObj := Output{ParametersMap: map[string]string{"router_id": routerId, "subnetId": subnetId}}
-	defer func() {
-		if err := recover(); err != nil {
-			log.Println("catch error：", err)
-			outputObj.Success = false
-			outputObj.Response = err
-			log.Println("==============Remove router interface failed")
-		} else {
-			log.Println("==============Remove router interface success")
-		}
-	}()
-	urlSuffix := fmt.Sprintf("routers/%s/remove_router_interface", routerId)
-	resp := wrapper(constructRouterInterfaceRequestOpts)(
-		defaultRouterInterfaceOpts(routerId, subnetId), &ExtraOption{
-		Resource: consts.ROUTER, ResourceLocation: urlSuffix})
-	defer fasthttp.ReleaseResponse(resp)
-
-	outputObj.Response = resp.Body()
-	outputObj.Success = true
-	return outputObj
-}
-
-func (s *Controller) DeleteRouterInterfaces() {
-	interfacePorts := s.listRouterInterfacePorts()
-	ch := s.MakeDeleteChannel(consts.ROUTERINTERFACE, len(interfacePorts.Ps))
-
-	for _, port := range interfacePorts.Ps {
-		routerId := port.DeviceId
-		fixedIps := port.FixedIps
-		for _, fixedIp := range fixedIps {
-			tempFixedIp := fixedIp
-			go func() {
-				ch <- s.RemoveRouterInterface(routerId, tempFixedIp.SubnetId)
-			}()
-		}
-	}
-	if len(ch) != cap(ch) {
-		for len(ch) != cap(ch) {}
-	}
-	log.Println("Router interfaces were deleted completely")
-}
-
-func (s *Controller) ListRouters() entity.Routers {
-	var urlSuffix = ""
-	if s.projectName != consts.ADMIN {
-		urlSuffix = fmt.Sprintf("project_id=%s", s.projectID)
-	}
-	resp := wrapper(constructListRequestOpts)(nil, &ExtraOption{
-		Resource: consts.ROUTER, ResourceLocation: consts.ROUTERS, ResourceSuffix: urlSuffix})
-	defer fasthttp.ReleaseResponse(resp)
-
-	var routers entity.Routers
-	_ = json.Unmarshal(resp.Body(), &routers)
-	log.Println("==============List routers success, there had", routers.Count)
-	return routers
-}
-
-func (s *Controller) listRouterInterfacePorts() entity.Ports {
-	urlSuffix := fmt.Sprintf("device_owner=network:router_interface&project_id=%s", s.projectID)
-	resp := wrapper(constructListRequestOpts)(nil, &ExtraOption{
-		Resource: consts.ROUTERINTERFACE, ResourceLocation: consts.PORTS,
-		ResourceSuffix: urlSuffix})
-	defer fasthttp.ReleaseResponse(resp)
-
-	var ports entity.Ports
-	_ = json.Unmarshal(resp.Body(), &ports)
-	log.Println("==============List router interface port success, there had", ports.Count)
-	return ports
-}
-
-func (s *Controller) constructUpdateRouterNoRoutes(opts entity.CreateUpdateOptions, extraOpts *ExtraOption) RequestOption {
-	return RequestOption{
-		Action: UPDATE,
-		Resource: extraOpts.Resource,
-		ResourceLocation: extraOpts.ResourceLocation,
-		RequestSuffix: extraOpts.ResourceSuffix,
-		Body: opts,
-		Headers: map[string]string{consts.AuthToken: defaultController.Token()},
-	}
-}
-
-func (s *Controller) updateRouterNoRoutes(id string) Output {
-	outputObj := Output{ParametersMap: map[string]string{"router_id": id}}
-	defer func() {
-		if err := recover(); err != nil {
-			log.Println("catch error：", err)
-			outputObj.Success = false
-			outputObj.Response = err
-		}
-	}()
-
-	opts := &entity.UpdateRouterOpts{Routes: new([]entity.Route)}
-	resp := wrapper(s.constructUpdateRouterNoRoutes)(opts, &ExtraOption{
-		Resource: consts.ROUTER, ResourceLocation: fmt.Sprintf("%s/%s", consts.ROUTERS, id)})
-	defer fasthttp.ReleaseResponse(resp)
-
-	outputObj.Response = ""
-	outputObj.Success = true
-	return outputObj
-}
-
-func (s *Controller) DeleteRouterRoutes() {
-	routers := s.ListRouters()
-	length := 0
-	for _, router := range routers.Rs {
-		if len(router.Routes) != 0 {
-			length++
-		}
-
-	}
-	ch := s.MakeDeleteChannel(consts.ROUTERROUTE, length)
-
-	for _, router := range routers.Rs {
-		if len(router.Routes) != 0 {
-			go func() {
-				ch <- s.updateRouterNoRoutes(router.Id)
-			}()
-		}
-	}
-	if len(ch) != cap(ch) {
-		for len(ch) != cap(ch) {}
-	}
-	log.Println("Router routes were deleted completely")
-}
-
-func (s *Controller) DeleteRouter(routerId string) Output {
-	outputObj := Output{ParametersMap: map[string]string{"router_id": routerId}}
-	defer func() {
-		if err := recover(); err != nil {
-			log.Println("catch error：", err)
-			outputObj.Success = false
-			outputObj.Response = err
-			log.Println("==============Delete router failed", routerId)
-		} else {
-			log.Println("==============Delete router success", routerId)
-		}
-	}()
-
-	urlSuffix := fmt.Sprintf("%s/%s", consts.ROUTERS, routerId)
-	resp := wrapper(constructListRequestOpts)(nil, &ExtraOption{
-		Resource: consts.ROUTER, ResourceLocation: urlSuffix})
-    defer fasthttp.ReleaseResponse(resp)
-
-	outputObj.Response = resp.StatusCode()
-	if resp.StatusCode() == fasthttp.StatusOK {
-		outputObj.Success = true
-	}
-	return outputObj
-}
-
-func (s *Controller) DeleteRouters() {
-	routers := s.ListRouters()
-	ch := s.MakeDeleteChannel(consts.ROUTER, len(routers.Rs))
-	for _, router := range routers.Rs {
-		tempRouter := router
-		go func() {
-			ch <- s.DeleteRouter(tempRouter.Id)
-		}()
-	}
-	if len(ch) != cap(ch) {
-		for len(ch) != cap(ch) {}
-	}
-	log.Println("Routers were deleted completely")
-}
-
-func (s *Controller) ClearRouterGateway(routerId, extNetId string) Output {
-	outputObj := Output{ParametersMap: map[string]string{"router_id": routerId, "ext_net_id": extNetId}}
-	defer func() {
-		if err := recover(); err != nil {
-			log.Println("catch error：", err)
-			outputObj.Success = false
-			outputObj.Response = err
-		}
-	}()
-	urlSuffix := fmt.Sprintf("routers/%s", routerId)
-    opts := &entity.UpdateRouterOpts{
-		GatewayInfo: &entity.GatewayInfo{}}
-
-	resp := wrapper(constructUpdateRouterRequestOpts)(opts, &ExtraOption{
-		ParentID: routerId, Resource: consts.ROUTER, ResourceLocation: urlSuffix})
-	defer fasthttp.ReleaseResponse(resp)
-
-	outputObj.Success = true
-	outputObj.Response = ""
-	log.Println("==============Clear router gateway success, router", routerId)
-	return outputObj
-}
-
-func (s *Controller) DeleteRouterGateways() {
-	routers := s.ListRouters()
-	var length int
-	for _, router := range routers.Rs {
-		if !reflect.DeepEqual(router.GatewayInfo, nil) {
-			length++
-		}
-	}
-	ch := s.MakeDeleteChannel(consts.ROUTERGATEWAY, length)
-	for _, router := range routers.Rs {
-		if !reflect.DeepEqual(router.GatewayInfo, nil) {
-			go func() {
-				ch <- s.ClearRouterGateway(router.Id, router.GatewayInfo.NetworkID)
-			}()
-		}
-	}
-	if len(ch) != cap(ch) {
-		for len(ch) != cap(ch) {}
-	}
-	log.Println("Router gateways were deleted completely")
-}
-
-func (s *Controller) GetRouter(routerId string) entity.RouterMap {
-	urlSuffix := fmt.Sprintf("routers/%s", routerId)
-	resp := wrapper(constructListRequestOpts)(nil, &ExtraOption{
-		Resource: consts.ROUTER, ResourceLocation: urlSuffix})
-	defer fasthttp.ReleaseResponse(resp)
-
-	var router entity.RouterMap
-	_ = json.Unmarshal(resp.Body(), &router)
-	log.Println("==============Get router success", routerId)
-	return router
-}
 
 // floating ip
 
@@ -905,6 +1032,28 @@ func (s *Controller) DeletePortForwardings() {
 }
 
 // qos policy
+
+func (s *Controller) createQosPolicy(opts entity.CreateUpdateOptions) entity.QosPolicyMap {
+	res := wrapper(constructSgRuleRequestOpts)(opts, &ExtraOption{
+		ResourceLocation: "qos/policies"})
+	defer fasthttp.ReleaseResponse(res)
+
+	var qosPolicy entity.QosPolicyMap
+	_ = json.Unmarshal(res.Body(), &qosPolicy)
+	log.Println("==============Create qos policy success", qosPolicy.Id)
+	return qosPolicy
+}
+
+func (s *Controller) CreateBandwidthLimitRule(opts entity.CreateUpdateOptions, qosPolicyId string) entity.BandwidthLimitRuleMap {
+	res := wrapper(constructBandwidthLimitRuleRequestOpts)(opts, &ExtraOption{ParentID: qosPolicyId})
+	defer fasthttp.ReleaseResponse(res)
+
+	var rule entity.BandwidthLimitRuleMap
+	_ = json.Unmarshal(res.Body(), &rule)
+
+	log.Println("==============Create bandwidth_limit_rule success")
+	return rule
+}
 
 func (s *Controller) DeleteBandwidthLimitRules() {
 	qoss := s.listQoss()
@@ -1065,7 +1214,7 @@ func (s *Controller) DeleteQosRule(ruleType, qosId, ruleId string) Output {
 	}()
 
 	urlSuffix := fmt.Sprintf("qos/policies/%s/%s/%s", qosId, identity, ruleId)
-	resp := wrapper(constructListRequestOpts)(nil, &ExtraOption{
+	resp := wrapper(constructDeleteRequestOpts)(nil, &ExtraOption{
 		Resource: consts.QOS_POLICY, ResourceLocation: urlSuffix})
 	defer fasthttp.ReleaseResponse(resp)
 
@@ -1076,125 +1225,6 @@ func (s *Controller) DeleteQosRule(ruleType, qosId, ruleId string) Output {
 	return outputObj
 }
 
-// security group
-
-func (s *Controller) getSecurityGroup(sgId string) interface{} {
-	urlSuffix := fmt.Sprintf("security-groups/%s", sgId)
-	resp := wrapper(constructListRequestOpts)(nil, &ExtraOption{
-		Resource: consts.SECURITYGROUP, ResourceLocation: urlSuffix})
-	defer fasthttp.ReleaseResponse(resp)
-
-	var sg entity.Sg
-	_ = json.Unmarshal(resp.Body(), &sg)
-	log.Println(fmt.Sprintf("get sg==%+v", sg))
-	return sg
-}
-
-
-func (s *Controller) listSecurityGroups() entity.Sgs {
-	urlSuffix := fmt.Sprintf("project_id=%s", s.projectID)
-	resp := wrapper(constructListRequestOpts)(nil, &ExtraOption{
-		Resource: consts.SECURITYGROUP, ResourceLocation: consts.SECURITYGROUPS,
-		ResourceSuffix: urlSuffix})
-	defer fasthttp.ReleaseResponse(resp)
-
-	var sgs entity.Sgs
-	_ = json.Unmarshal(resp.Body(), &sgs)
-	log.Println("==============List sg success, there had", len(sgs.Sgs))
-	return sgs
-}
-
-func (s *Controller) deleteSecurityGroup(id string) Output {
-	outputObj := Output{ParametersMap: map[string]string{"security_group_id": id}}
-	defer func() {
-		if err := recover(); err != nil {
-			log.Println("catch error：", err)
-			outputObj.Success = false
-			outputObj.Response = err
-		}
-	}()
-
-	resp := wrapper(constructDeleteRequestOpts)(nil, &ExtraOption{
-		Resource: consts.SECURITYGROUP,
-		ResourceLocation: fmt.Sprintf("%s/%s", strings.Replace(consts.SECURITYGROUPS, "_", "-", 1), id)})
-	defer fasthttp.ReleaseResponse(resp)
-
-	outputObj.Response = resp.StatusCode()
-	if resp.StatusCode() == fasthttp.StatusOK {
-		outputObj.Success = true
-	}
-	return outputObj
-}
-
-func (s *Controller) DeleteSecurityGroups() {
-	sgs := s.listSecurityGroups()
-	ch := s.MakeDeleteChannel(consts.SECURITYGROUP, len(sgs.Sgs))
-	for _, sg := range sgs.Sgs {
-		tempSg := sg
-		go func() {
-			ch <- s.deleteSecurityGroup(tempSg.Id)
-		}()
-	}
-	if len(ch) != cap(ch) {
-		for len(ch) != cap(ch) {}
-	}
-	log.Println("Security groups were deleted completely")
-}
-
-
-// security group rule
-
-func (s *Controller) listSecurityGroupRules() entity.SgRules {
-	urlSuffix := fmt.Sprintf("project_id=%s", s.projectID)
-	resp := wrapper(constructListRequestOpts)(nil, &ExtraOption{
-		Resource: consts.SECURITYGROUPRULE, ResourceLocation: consts.SECURITYGROUPRULES,
-		ResourceSuffix: urlSuffix})
-	defer fasthttp.ReleaseResponse(resp)
-
-	var sgRules entity.SgRules
-	_ = json.Unmarshal(resp.Body(), &sgRules)
-
-	log.Println("==============List sg rule success, there had", len(sgRules.Srs))
-	return sgRules
-}
-
-func (s *Controller) deleteSecurityGroupRule(id string) Output {
-	outputObj := Output{ParametersMap: map[string]string{"security_group_id": id}}
-	defer func() {
-		if err := recover(); err != nil {
-			log.Println("catch error：", err)
-			outputObj.Success = false
-			outputObj.Response = err
-		}
-	}()
-
-	urlSuffix := fmt.Sprintf("security-group-rules/%s", id)
-	resp := wrapper(constructListRequestOpts)(nil, &ExtraOption{
-		Resource: consts.SECURITYGROUPRULE, ResourceLocation: urlSuffix})
-	defer fasthttp.ReleaseResponse(resp)
-
-	outputObj.Response = resp.StatusCode()
-	if resp.StatusCode() == fasthttp.StatusOK {
-		outputObj.Success = true
-	}
-	return outputObj
-}
-
-func (s *Controller) DeleteSecurityGroupRules() {
-	sgRules := s.listSecurityGroupRules()
-	ch := s.MakeDeleteChannel(consts.SECURITYGROUPRULE, len(sgRules.Srs))
-	for _, sgRule := range sgRules.Srs {
-		tempSgRule := sgRule
-		go func() {
-			ch <- s.deleteSecurityGroupRule(tempSgRule.Id)
-		}()
-	}
-	if len(ch) != cap(ch) {
-		for len(ch) != cap(ch) {}
-	}
-	log.Println("Security group rules were deleted completely")
-}
-
 // rbac policy
 
 // vpn
@@ -1203,7 +1233,7 @@ func (s *Controller) DeleteSecurityGroupRules() {
 // Volume type
 func (s *Controller) createVolumeType(opts entity.CreateUpdateOptions) entity.VolumeType {
 	PostUrl := fmt.Sprintf("%s/types", s.projectID)
-	res := wrapper(constructSgRuleRequestOpts)(opts, &ExtraOption{
+	res := wrapper(constructVolumeTypeRequestOpts)(opts, &ExtraOption{
 		ResourceLocation: PostUrl})
 	defer fasthttp.ReleaseResponse(res)
 
@@ -1211,17 +1241,6 @@ func (s *Controller) createVolumeType(opts entity.CreateUpdateOptions) entity.Vo
 	_ = json.Unmarshal(res.Body(), &volumeType)
 	return volumeType
 }
-
-func (s *Controller) UpdateVolumeType(opts entity.CreateUpdateOptions, volumeTypeId string) entity.VolumeType {
-	reqSuffix := fmt.Sprintf("%s/types/%s", s.projectID, volumeTypeId)
-	resp := wrapper(constructVolumeTypeRequestOpts)(opts, &ExtraOption{ResourceLocation: reqSuffix})
-	defer fasthttp.ReleaseResponse(resp)
-
-	var volumeType entity.VolumeType
-	_ = json.Unmarshal(resp.Body(), &volumeType)
-	return volumeType
-}
-
 
 func (s *Controller) VolumeTypeAssociateQos(opts entity.CreateUpdateOptions, qosId, volTypeId string) {
 	URL := fmt.Sprintf("/%s/qos-specs/%s/associate?vol_type_id=%s", s.projectID, qosId, volTypeId)

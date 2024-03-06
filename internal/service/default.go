@@ -1,15 +1,10 @@
 package service
 
 import (
-	"encoding/json"
 	"fmt"
-	"github.com/valyala/fasthttp"
 	"go-openstackclient/configs"
-	"go-openstackclient/consts"
 	"go-openstackclient/internal/entity"
-	"log"
 	"math/rand"
-	"strings"
 	"time"
 )
 
@@ -20,186 +15,79 @@ var (
 
 func CreateNetworkHelper() string {
 	defaultOpts := defaultNetworkOpts()
-    res := wrapper(constructNetworkRequestOpts)(defaultOpts, nil)
-	defer fasthttp.ReleaseResponse(res)
-	var network entity.NetworkMap
-	_ = json.Unmarshal(res.Body(), &network)
-
-	log.Println("==============Create internal network success", network.Network.Id)
+    network := defaultController.CreateNetwork(defaultOpts)
 	return network.Id
 }
 
 func CreateSubnetHelper(networkId string) string {
-	createOpts := defaultSubnetOpts(networkId)
-	res := wrapper(constructSubnetRequestOpts)(createOpts, nil)
-	defer fasthttp.ReleaseResponse(res)
-
-	var subnet entity.SubnetMap
-	_ = json.Unmarshal(res.Body(), &subnet)
-
-	log.Println("==============Create internal subnet success", subnet.Id)
+	defaultOpts := defaultSubnetOpts(networkId)
+	subnet := defaultController.CreateSubnet(defaultOpts)
 	return subnet.Id
 }
 
 func CreateSecurityGroupHelper() string {
 	defaultSg := defaultSgOpts()
-	res := wrapper(constructSgRequestOpts)(defaultSg, nil)
-	defer fasthttp.ReleaseResponse(res)
-
-	var sg entity.Sg
-	_ = json.Unmarshal(res.Body(), &sg)
-
-	log.Println("==============Create security group success", sg.Id)
+    sg := defaultController.CreateSecurityGroup(defaultSg)
 	return sg.Id
-}
-
-func CreateSecurityRuleHelper(opts entity.CreateUpdateOptions) {
-	res := wrapper(constructSgRuleRequestOpts)(opts, nil)
-	defer fasthttp.ReleaseResponse(res)
-
-	var sgRule entity.SgRule
-	_ = json.Unmarshal(res.Body(), &sgRule)
-
-	log.Println("==============Create security group rule success", sgRule.Id)
 }
 
 func CreateSecurityRuleICMP(sgId string) {
 	ingressICMP := defaultICMPIngressSgRuleOpts(sgId)
-	CreateSecurityRuleHelper(ingressICMP)
+	defaultController.CreateSecurityRule(ingressICMP)
 
 	egressICMP := defaultICMPEgressSgRuleOpts(sgId)
-	CreateSecurityRuleHelper(egressICMP)
+	defaultController.CreateSecurityRule(egressICMP)
 }
 
 
 func CreateSecurityRuleSSH(sgId string) {
 	ingressSSH := defaultSSHIngressSgRuleOpts(sgId)
-	CreateSecurityRuleHelper(ingressSSH)
+	defaultController.CreateSecurityRule(ingressSSH)
 
 	egressSSH := defaultSSHEgressSgRuleOpts(sgId)
-	CreateSecurityRuleHelper(egressSSH)
+	defaultController.CreateSecurityRule(egressSSH)
 }
 
-func CreatePortHelper(networkId, subnetId string) {
-	createOpts := defaultPortOpts(networkId, subnetId)
-    res := wrapper(constructPortRequestOpts)(createOpts, nil)
-	defer fasthttp.ReleaseResponse(res)
-
-	var port entity.PortMap
-	_ = json.Unmarshal(res.Body(), &port)
-
-	log.Println("==============Create internal port success", port.Id)
+func CreatePortHelper(networkId, subnetId string) string {
+	defaultOpts := defaultPortOpts(networkId, subnetId)
+    port := defaultController.CreatePort(defaultOpts)
+    return port.Id
 }
 
 func CreateRouterHelper() string {
 	createOpts := defaultRouterOpts()
-    res := wrapper(constructRouterRequestOpts)(createOpts, nil)
-	defer fasthttp.ReleaseResponse(res)
-
-	var router entity.RouterMap
-	_ = json.Unmarshal(res.Body(), &router)
-
-	log.Println("==============Create router success", router.Id)
+    router := defaultController.CreateRouter(createOpts)
 	return router.Id
 }
 
 func SetRouterGatewayHelper(routerId, extNetId string) {
 	createOpts := defaultRouterGatewayOpts(extNetId)
-    res := wrapper(constructSetRouterGatewayRequestOpts)(createOpts, &ExtraOption{ParentID: routerId})
-	defer fasthttp.ReleaseResponse(res)
-
-	var router entity.RouterMap
-	_ = json.Unmarshal(res.Body(), &router)
-
-	log.Println("==============Set router gateway success", router.Id)
+    defaultController.SetRouterGateway(createOpts, routerId)
 }
 
 func AddRouterInterfaceHelper(routerId, subnetId string) {
     opts := defaultRouterInterfaceOpts(routerId, subnetId)
-	res := wrapper(constructRouterInterfaceRequestOpts)(opts, nil)
-	defer fasthttp.ReleaseResponse(res)
-
-	var routerInterface entity.RouterInterface
-	_ = json.Unmarshal(res.Body(), &routerInterface)
-
-	log.Println("==============Add router interface success")
-}
-
-
-func makeSureInstanceActive(instanceId string) {
-	instance := GetInstanceDetail(instanceId)
-	if instance == nil {
-		time.Sleep(2 * time.Second)
-		for instance == nil {
-			instance = GetInstanceDetail(instanceId)
-			time.Sleep(2 * time.Second)
-		}
-	}
-	timeout := 2 * 60 * time.Second
-	done := make(chan bool, 1)
-	go func() {
-		state := instance.Server.Status
-		for state != "ACTIVE" {
-			time.Sleep(10 * time.Second)
-			instance = GetInstanceDetail(instanceId)
-			state =instance.Server.Status
-		}
-		done <- true
-	}()
-	select {
-	case <-done:
-		log.Println("*******************Create instance success")
-	case <-time.After(timeout):
-		log.Println("*******************Create instance timeout")
-	}
+	defaultController.AddRouterInterface(opts)
 }
 
 func CreateInstanceHelper(netId, sgName string) string {
-	EnsureSgExist(sgName)
+	defaultController.EnsureSgExist(sgName)
 	opts := defaultInstanceOpts(netId, sgName)
-	res := wrapper(constructInstanceRequestOpts)(opts, nil)
-	defer fasthttp.ReleaseResponse(res)
-
-	var server entity.ServerMap
-	_ = json.Unmarshal(res.Body(), &server)
-	makeSureInstanceActive(server.Id)
+	server := defaultController.CreateInstance(opts)
 	return server.Id
 }
 
-func GetInstanceDetail(instanceId string) *entity.ServerMap {
-	res := wrapper(constructListRequestOpts)(nil, &ExtraOption{
-		ParentID: "", Resource: consts.SERVER,
-		ResourceLocation: fmt.Sprintf("%s/%s", consts.SERVERS, instanceId),
-		ResourceSuffix: ""})
-	defer fasthttp.ReleaseResponse(res)
-
-	var server entity.ServerMap
-	_ = json.Unmarshal(res.Body(), &server)
-	log.Println("==============List server success", string(res.Body()))
-	return &server
+func CreateQosPolicyHelper() string {
+	opts := defaultQosPolicyRequestOpts()
+	qosPolicy := defaultController.createQosPolicy(opts)
+	return qosPolicy.Id
 }
 
-
-func GetSgsByName(sgName string) *entity.Sgs {
-    res := wrapper(constructListRequestOpts)(nil, &ExtraOption{
-    	ParentID: "", Resource: consts.SECURITYGROUP,
-    	ResourceLocation: strings.Replace(consts.SECURITYGROUPS, "_", "-", 1),
-        ResourceSuffix: fmt.Sprintf("name=%s", sgName)})
-    defer fasthttp.ReleaseResponse(res)
-
-	var sgs entity.Sgs
-	_ = json.Unmarshal(res.Body(), &sgs)
-	log.Println("==============List sgs success", sgs)
-	return &sgs
-}
-
-func EnsureSgExist(sgName string) {
-    sgs := GetSgsByName(sgName)
-    if len(sgs.Sgs) == 0 {
-    	sgId := CreateSecurityGroupHelper()
-    	CreateSecurityRuleICMP(sgId)
-    	CreateSecurityRuleSSH(sgId)
-	}
+func CreateBandwidthLimitRuleHelper(qosPolicyId string) {
+	ingressOpts := defaultBandwidthLimitRuleIngressRequestOpts()
+	egressOpts := defaultBandwidthLimitRuleEgressRequestOpts()
+	defaultController.CreateBandwidthLimitRule(ingressOpts, qosPolicyId)
+	defaultController.CreateBandwidthLimitRule(egressOpts, qosPolicyId)
 }
 
 func defaultNetworkOpts() entity.CreateUpdateOptions {
@@ -300,3 +188,23 @@ func defaultRouterInterfaceOpts(routerId, subnetId string) entity.CreateUpdateOp
 	return addInterfaceOpts
 }
 
+func defaultQosPolicyRequestOpts() entity.CreateUpdateOptions {
+	opts := &entity.CreateQosPolicyOpts{
+		Name: defaultName,
+	}
+	return opts
+}
+
+func defaultBandwidthLimitRuleIngressRequestOpts() entity.CreateUpdateOptions {
+	opts := &entity.CreateBandwidthLimitRuleOpts{
+		MaxKBps: 10240, MaxBurstKBps: 0, Direction: "ingress",
+	}
+	return opts
+}
+
+func defaultBandwidthLimitRuleEgressRequestOpts() entity.CreateUpdateOptions {
+	opts := &entity.CreateBandwidthLimitRuleOpts{
+		MaxKBps: 20480, MaxBurstKBps: 0, Direction: "egress",
+	}
+	return opts
+}
