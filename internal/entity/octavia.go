@@ -670,6 +670,14 @@ func (opts *CreateL7PoliciesOpts) ToRequestBody() string {
 	return reqBody
 }
 
+func (opts *CreateRuleOpts) ToRequestBody() string {
+	reqBody, err := BuildRequestBody(opts, consts.L7RULE)
+	if err != nil {
+		panic(fmt.Sprintf("Failed to build request body %s", err))
+	}
+	return reqBody
+}
+
 type Loadbalancer struct {
 	Description        string `json:"description"`
 	AdminStateUp       bool   `json:"admin_state_up"`

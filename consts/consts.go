@@ -105,6 +105,7 @@ const (
     L7RULE                     = "l7rule"
     VpcConnections             = "vpc_connections"
     VpcConnection              = "vpc_connection"
+    Image                      = "image"
     Images                     = "images"
     Snats                      = "snats"
     Snat                       = "snat"

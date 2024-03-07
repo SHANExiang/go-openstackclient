@@ -9,9 +9,7 @@ import (
 	"go-openstackclient/internal/client"
 	"go-openstackclient/internal/entity"
 	"log"
-	"math"
 	"reflect"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -727,7 +725,7 @@ func (s *Controller) DeleteRouterGateways() {
 	for _, router := range routers.Rs {
 		if !reflect.DeepEqual(router.GatewayInfo, nil) {
 			go func() {
-				ch <- s.ClearRouterGateway(router.Id, router.GatewayInfo.NetworkID)
+				ch <- s.ClearRouterGateway(router.Id, router.GatewayInfs.NetworkID)
 			}()
 		}
 	}
@@ -1501,4 +1499,676 @@ func (s *Controller) DeleteSnapshots() {
 		for len(ch) != cap(ch) {}
 	}
 	log.Println("Snapshots were deleted completely")
+}
+
+
+// load balancer
+
+func (s *Controller) CreateLoadbalancer(opts entity.CreateLoadbalancerOpts) string {
+	opts.Name = fmt.Sprintf("%s_%s", opts.Name, consts.LOADBALANCER)
+	urlSuffix := "lbaas/loadbalancers"
+	resp := wrapper(constructCreateLoadBalancerRequestOpts)(nil, &ExtraOption{
+		ResourceLocation: urlSuffix})
+	defer fasthttp.ReleaseResponse(resp)
+
+	var lb entity.LoadbalancerMap
+	_ = json.Unmarshal(resp.Body(), &lb)
+
+	s.makeSureLbActive(lb.Loadbalancer.Id)
+	log.Println("==============create loadbalancer success", lb.Loadbalancer.Id)
+	return lb.Loadbalancer.Id
+}
+
+func (s *Controller) deleteLoadbalancer(ipId string) Output {
+	outputObj := Output{ParametersMap: map[string]string{"loadbalancer_id": ipId}}
+	defer func() {
+		if err := recover(); err != nil {
+			log.Println("catch error：", err)
+			outputObj.Success = false
+			outputObj.Response = err
+		}
+	}()
+
+	urlSuffix := fmt.Sprintf("lbaas/loadbalancers/%s", ipId)
+	resp := wrapper(constructDeleteRequestOpts)(nil, &ExtraOption{
+		Resource: consts.LOADBALANCER,
+		ResourceLocation: urlSuffix})
+	defer fasthttp.ReleaseResponse(resp)
+
+	if resp.StatusCode() == fasthttp.StatusOK {
+		outputObj.Success = true
+	}
+	outputObj.Response = resp
+	s.makeSureLbDeleted(ipId)
+	return outputObj
+}
+
+func (s *Controller) getLoadbalancer(ipId string) entity.LoadbalancerMap {
+	urlSuffix := fmt.Sprintf("lbaas/loadbalancers/%s", ipId)
+	resp := wrapper(constructListRequestOpts)(nil, &ExtraOption{
+		Resource: consts.LOADBALANCER,
+		ResourceLocation: urlSuffix})
+	defer fasthttp.ReleaseResponse(resp)
+
+	var lb entity.LoadbalancerMap
+	_ = json.Unmarshal(resp.Body(), &lb)
+	return lb
+}
+
+func (s *Controller) ListLoadbalancers() entity.Loadbalancers {
+	urlSuffix := "lbaas/loadbalancers"
+	resp := wrapper(constructListRequestOpts)(nil, &ExtraOption{
+		Resource: consts.LOADBALANCER,
+		ResourceLocation: urlSuffix})
+	defer fasthttp.ReleaseResponse(resp)
+
+	var lbs entity.Loadbalancers
+	_ = json.Unmarshal(resp.Body(), &lbs)
+	log.Println("==============List loadbalancers success, there had", len(lbs.LBs))
+	return lbs
+}
+
+func (s *Controller) DeleteLoadbalancers() {
+	lbs := s.ListLoadbalancers()
+	ch := s.MakeDeleteChannel(consts.LOADBALANCER, len(lbs.LBs))
+
+	for _, lb := range lbs.LBs {
+		tempLb := lb
+		go func() {
+			ch <- s.deleteLoadbalancer(tempLb.Id)
+		}()
+	}
+	if len(ch) != cap(ch) {
+		for len(ch) != cap(ch) {}
+	}
+	log.Println("Loadbalancers were deleted completely")
+}
+
+// listener
+
+func (s *Controller) CreateListener(opts entity.CreateListenerOpts) string {
+	urlSuffix := "lbaas/listeners"
+	opts.Name = fmt.Sprintf("%s_%s", opts.Name, consts.LISTENER)
+	resp := wrapper(constructCreateListenerRequestOpts)(nil, &ExtraOption{
+		ResourceLocation: urlSuffix})
+	defer fasthttp.ReleaseResponse(resp)
+
+	var listener entity.ListenerMap
+	_ = json.Unmarshal(resp.Body(), &listener)
+
+	s.makeSureLbActive(opts.LoadbalancerID)
+	log.Println("==============Create listener success", listener.Listener.Id)
+	return listener.Listener.Id
+}
+
+func (s *Controller) deleteListener(listenerId string) Output {
+	outputObj := Output{ParametersMap: map[string]string{"listener_id": listenerId}}
+	defer func() {
+		if err := recover(); err != nil {
+			log.Println("catch error：", err)
+			outputObj.Success = false
+		}
+	}()
+
+	urlSuffix := fmt.Sprintf("lbaas/listeners/%s", listenerId)
+	resp := wrapper(constructDeleteRequestOpts)(nil, &ExtraOption{
+		Resource: consts.LISTENER,
+		ResourceLocation: urlSuffix})
+	defer fasthttp.ReleaseResponse(resp)
+
+	if resp.StatusCode() == fasthttp.StatusOK {
+		outputObj.Success = true
+	}
+	outputObj.Response = resp
+	return outputObj
+}
+
+func (s *Controller) getListener(ipId string) entity.ListenerMap {
+	urlSuffix := fmt.Sprintf("lbaas/listeners/%s", ipId)
+	resp := wrapper(constructListRequestOpts)(nil, &ExtraOption{
+		Resource: consts.LISTENER,
+		ResourceLocation: urlSuffix})
+	defer fasthttp.ReleaseResponse(resp)
+
+	var listener entity.ListenerMap
+	_ = json.Unmarshal(resp.Body(), &listener)
+	return listener
+}
+
+func (s *Controller) ListListeners() entity.Listeners {
+	urlSuffix := "lbaas/listeners"
+	resp := wrapper(constructListRequestOpts)(nil, &ExtraOption{
+		Resource: consts.LISTENER,
+		ResourceLocation: urlSuffix})
+	defer fasthttp.ReleaseResponse(resp)
+
+	var listeners entity.Listeners
+	_ = json.Unmarshal(resp.Body(), &listeners)
+	log.Println("==============List listeners success, there had", len(listeners.Liss))
+	return listeners
+}
+
+func (s *Controller) DeleteListeners() {
+	listeners := s.ListListeners()
+	ch := s.MakeDeleteChannel(consts.LISTENER, len(listeners.Liss))
+
+	for _, listener := range listeners.Liss {
+		temp := listener
+		go func() {
+			ch <- s.deleteListener(temp.Id)
+		}()
+	}
+	if len(ch) != cap(ch) {
+		for len(ch) != cap(ch) {}
+	}
+	log.Println("Listeners were deleted completely")
+}
+
+func (s *Controller) makeSureLbActive(lbId string) entity.LoadbalancerMap {
+	lb := s.getLoadbalancer(lbId)
+
+	for lb.Loadbalancer.ProvisioningStatus != consts.ACTIVE {
+		time.Sleep(5 * time.Second)
+		lb = s.getLoadbalancer(lbId)
+	}
+	return lb
+}
+
+func (s *Controller) makeSureLbDeleted(lbId string) {
+	lb := s.getLoadbalancer(lbId)
+	for &lb != nil {
+		time.Sleep(5 * time.Second)
+		lb = s.getLoadbalancer(lbId)
+	}
+	log.Println("*******************Lb was deleted success")
+}
+
+// pool
+
+func (s *Controller) CreatePool(opts entity.CreatePoolOpts) string {
+	urlSuffix := "lbaas/pools"
+	opts.Name = fmt.Sprintf("%s_%s", opts.Name, consts.POOL)
+	resp := wrapper(constructCreatePoolRequestOpts)(nil, &ExtraOption{
+		ResourceLocation: urlSuffix})
+	defer fasthttp.ReleaseResponse(resp)
+
+	var pool entity.PoolMap
+	_ = json.Unmarshal(resp.Body(), &pool)
+
+	s.makeSurePoolActive(pool.Pool.Id)
+	for _, lb := range pool.Pool.Loadbalancers {
+		s.makeSureLbActive(lb.Id)
+	}
+	log.Println("==============Create pool success", pool.Pool.Id)
+	return pool.Pool.Id
+}
+
+func (s *Controller) deletePool(poolId string) Output {
+	pool := s.getPool(poolId)
+	outputObj := Output{ParametersMap: map[string]string{"pool_id": poolId}}
+	defer func() {
+		if err := recover(); err != nil {
+			log.Println("catch error：", err)
+			outputObj.Success = false
+		}
+	}()
+
+	urlSuffix := fmt.Sprintf( "lbaas/pools/%s", poolId)
+	resp := wrapper(constructDeleteRequestOpts)(nil, &ExtraOption{
+		Resource: consts.POOL,
+		ResourceLocation: urlSuffix})
+	defer fasthttp.ReleaseResponse(resp)
+
+	if resp.StatusCode() == fasthttp.StatusOK {
+		outputObj.Success = true
+	}
+	outputObj.Response = resp
+	for _, lb := range pool.Loadbalancers {
+		s.makeSureLbActive(lb.Id)
+	}
+	return outputObj
+}
+
+func (s *Controller) getPool(ipId string) entity.PoolMap {
+	urlSuffix := fmt.Sprintf("lbaas/pools/%s", ipId)
+	resp := wrapper(constructListRequestOpts)(nil, &ExtraOption{
+		Resource: consts.POOL,
+		ResourceLocation: urlSuffix})
+	defer fasthttp.ReleaseResponse(resp)
+
+	var pool entity.PoolMap
+	_ = json.Unmarshal(resp.Body(), &pool)
+	return pool
+}
+
+func (s *Controller) ListPools() entity.Pools {
+	urlSuffix := "lbaas/pools"
+	resp := wrapper(constructListRequestOpts)(nil, &ExtraOption{
+		Resource: consts.POOL,
+		ResourceLocation: urlSuffix})
+	defer fasthttp.ReleaseResponse(resp)
+
+	var pools entity.Pools
+	_ = json.Unmarshal(resp.Body(), &pools)
+	log.Println("==============List pools success, there had", len(pools.Ps))
+	return pools
+}
+
+func (s *Controller) DeletePools() {
+	pools := s.ListPools()
+	ch := s.MakeDeleteChannel(consts.POOL, len(pools.Ps))
+	for _, pool := range pools.Ps {
+		//for _, member := range pool.Members {
+		//	s.deletePoolMember(pool, member.(map[string]interface{})["id"].(string))
+		//}
+		temp := pool
+		go func() {
+			ch <- s.deletePool(temp.Id)
+		}()
+	}
+	if len(ch) != cap(ch) {
+		for len(ch) != cap(ch) {}
+	}
+	log.Println("Pool were deleted completely")
+}
+
+func (s *Controller) makeSurePoolActive(poolId string) entity.PoolMap {
+	pool := s.getPool(poolId)
+
+	for pool.Pool.ProvisioningStatus != consts.ACTIVE {
+		time.Sleep(5 * time.Second)
+		pool = s.getPool(poolId)
+	}
+	return pool
+}
+
+// pool member
+
+func (s *Controller) CreatePoolMember(poolId string, opts entity.CreateMemberOpts) string {
+	urlSuffix := fmt.Sprintf("lbaas/pools/%s/members", poolId)
+	opts.Name = fmt.Sprintf("%s_%s", opts.Name, consts.POOL)
+	resp := wrapper(constructCreatePoolMemberRequestOpts)(nil, &ExtraOption{
+		ResourceLocation: urlSuffix})
+	defer fasthttp.ReleaseResponse(resp)
+
+	var member entity.MemberMap
+	_ = json.Unmarshal(resp.Body(), &member)
+
+	s.makeSurePoolActive(poolId)
+	log.Println("==============Create member success", member.Member.Id)
+	return member.Member.Id
+}
+
+func (s *Controller) deletePoolMember(pool entity.Pool, memberId string) Output {
+	defer s.mu.Unlock()
+	s.mu.Lock()
+	outputObj := Output{ParametersMap: map[string]string{"member_id": memberId}}
+	defer func() {
+		if err := recover(); err != nil {
+			log.Println("catch error：", err)
+			outputObj.Success = false
+		}
+	}()
+
+	urlSuffix := fmt.Sprintf("lbaas/pools/%s/members/%s", pool.Id, memberId)
+	resp := wrapper(constructDeleteRequestOpts)(nil, &ExtraOption{
+		Resource: consts.MEMBER,
+		ResourceLocation: urlSuffix})
+	defer fasthttp.ReleaseResponse(resp)
+
+	if resp.StatusCode() == fasthttp.StatusOK {
+		outputObj.Success = true
+	}
+	outputObj.Response = resp
+	s.makeSurePoolActive(pool.Id)
+	for _, lb := range pool.Loadbalancers {
+		s.makeSureLbActive(lb.Id)
+	}
+	return outputObj
+}
+
+func (s *Controller) getPoolMember(poolId, memberId string) entity.MemberMap {
+	urlSuffix := fmt.Sprintf("lbaas/pools/%s/members/%s", poolId, memberId)
+	resp := wrapper(constructListRequestOpts)(nil, &ExtraOption{
+		Resource: consts.MEMBER,
+		ResourceLocation: urlSuffix})
+	defer fasthttp.ReleaseResponse(resp)
+
+	var member entity.MemberMap
+	_ = json.Unmarshal(resp.Body(), &member)
+	return member
+}
+
+func (s *Controller) ListPoolMembers(poolId string) entity.Members {
+	urlSuffix := fmt.Sprintf("lbaas/pools/%s/members", poolId)
+	resp := wrapper(constructListRequestOpts)(nil, &ExtraOption{
+		Resource: consts.MEMBER,
+		ResourceLocation: urlSuffix})
+	defer fasthttp.ReleaseResponse(resp)
+	var ms entity.Members
+	_ = json.Unmarshal(resp.Body(), &ms)
+	log.Println("==============List pool members success, there had", len(ms.Ms))
+	return ms
+}
+
+
+func (s *Controller) DeleteMembers() {
+	pools := s.ListPools()
+	var memberNumber int
+	for _, pool := range pools.Ps {
+		memberNumber += len(pool.Members)
+	}
+	ch := s.MakeDeleteChannel(consts.MEMBER, memberNumber)
+	for _, pool := range pools.Ps {
+		tempPool := pool
+		for _, member := range pool.Members {
+			temp := member
+			go func() {
+				ch <- s.deletePoolMember(tempPool, temp.Id)
+			}()
+		}
+	}
+	if len(ch) != cap(ch) {
+		for len(ch) != cap(ch) {}
+	}
+	log.Println("Pool members were deleted completely")
+}
+
+// health monitor
+
+func (s *Controller) CreateHealthMonitor(opts entity.CreateHealthMonitorOpts) string {
+	urlSuffix := "lbaas/healthmonitors"
+	opts.Name = fmt.Sprintf("%s_%s", opts.Name, consts.HEALTHMONITOR)
+	resp := wrapper(constructCreateHealthMonitorRequestOpts)(nil, &ExtraOption{
+		ResourceLocation: urlSuffix})
+	defer fasthttp.ReleaseResponse(resp)
+
+	var healthMonitor entity.HealthMonitorMap
+	_ = json.Unmarshal(resp.Body(), &healthMonitor)
+
+	log.Println("==============Create health monitor success", healthMonitor.Healthmonitor.Id)
+	return healthMonitor.Healthmonitor.Id
+}
+
+func (s *Controller) deleteHealthMonitor(healthmonitorId string) Output {
+	outputObj := Output{ParametersMap: map[string]string{"health_monitor_id": healthmonitorId}}
+	defer func() {
+		if err := recover(); err != nil {
+			log.Println("catch error：", err)
+			outputObj.Success = false
+		}
+	}()
+
+	urlSuffix := fmt.Sprintf("lbaas/healthmonitors/%s", healthmonitorId)
+	resp := wrapper(constructDeleteRequestOpts)(nil, &ExtraOption{
+		ResourceLocation: urlSuffix})
+	defer fasthttp.ReleaseResponse(resp)
+
+	if resp.StatusCode() == fasthttp.StatusOK {
+		outputObj.Success = true
+	}
+	outputObj.Response = resp
+	return outputObj
+}
+
+func (s *Controller) getHealthMonitor(healthmonitorId string) entity.HealthMonitorMap {
+	urlSuffix := fmt.Sprintf("lbaas/healthmonitors/%s", healthmonitorId)
+	resp := wrapper(constructListRequestOpts)(nil, &ExtraOption{
+		Resource: consts.HEALTHMONITOR,
+		ResourceLocation: urlSuffix})
+	defer fasthttp.ReleaseResponse(resp)
+
+	var healthmonitor entity.HealthMonitorMap
+	_ = json.Unmarshal(resp.Body(), &healthmonitor)
+	return healthmonitor
+}
+
+func (s *Controller) ListHealthMonitors() entity.HealthMonitors {
+	urlSuffix := "lbaas/healthmonitors"
+	resp := wrapper(constructDeleteRequestOpts)(nil, &ExtraOption{
+		Resource: consts.HEALTHMONITOR,
+		ResourceLocation: urlSuffix})
+	defer fasthttp.ReleaseResponse(resp)
+
+	var hms entity.HealthMonitors
+	_ = json.Unmarshal(resp.Body(), &hms)
+	log.Println("==============List health monitors success, there had", len(hms.HMs))
+	return hms
+}
+
+func (s *Controller) DeleteHealthmonitors() {
+	healthmonitors := s.ListHealthMonitors()
+	ch := s.MakeDeleteChannel(consts.HEALTHMONITOR, len(healthmonitors.HMs))
+	for _, healthmonitor := range healthmonitors.HMs {
+		temp := healthmonitor
+		go func() {
+			ch <- s.deleteHealthMonitor(temp.Id)
+		}()
+	}
+	if len(ch) != cap(ch) {
+		for len(ch) != cap(ch) {}
+	}
+	for _, healthmonitor := range healthmonitors.HMs {
+		for _, pool := range healthmonitor.Pools {
+			s.makeSurePoolActive(pool.Id)
+		}
+	}
+	log.Println("Health monitors were deleted completely")
+}
+
+// L7 policy
+
+func (s *Controller) CreateL7Policy(listenerId string, opts entity.CreateUpdateOptions) string {
+	urlSuffix := "lbaas/l7policies"
+	resp := wrapper(constructCreateL7PolicyRequestOpts)(opts, &ExtraOption{
+		ResourceLocation: urlSuffix})
+	defer fasthttp.ReleaseResponse(resp)
+
+	var l7policy entity.L7PolicyMap
+	_ = json.Unmarshal(resp.Body(), &l7policy)
+
+	s.makeSureL7PolicyActive(l7policy.L7Policy.Id)
+	log.Println("==============create l7policy success", l7policy.L7Policy.Id)
+	return l7policy.L7Policy.Id
+}
+
+func (s *Controller) deleteL7Policy(l7policyId string) Output {
+	outputObj := Output{ParametersMap: map[string]string{"l7Policy_id": l7policyId}}
+	defer func() {
+		if err := recover(); err != nil {
+			log.Println("catch error：", err)
+			outputObj.Success = false
+		}
+	}()
+
+	urlSuffix := fmt.Sprintf("lbaas/l7policies/%s", l7policyId)
+	resp := wrapper(constructDeleteRequestOpts)(nil, &ExtraOption{
+		ResourceLocation: urlSuffix})
+	defer fasthttp.ReleaseResponse(resp)
+
+	if resp.StatusCode() == fasthttp.StatusOK {
+		outputObj.Success = true
+	}
+	outputObj.Response = resp
+	return outputObj
+}
+
+func (s *Controller) getL7Policy(l7policyId string) entity.L7PolicyMap {
+	urlSuffix := fmt.Sprintf("lbaas/l7policies/%s", l7policyId)
+	resp := wrapper(constructListRequestOpts)(nil, &ExtraOption{
+		Resource: consts.L7POLICY,
+		ResourceLocation: urlSuffix})
+	defer fasthttp.ReleaseResponse(resp)
+
+	var l7policy entity.L7PolicyMap
+	_ = json.Unmarshal(resp.Body(), &l7policy)
+	return l7policy
+}
+
+func (s *Controller) ListL7Policies() entity.L7Policies {
+	urlSuffix := "lbaas/l7policies"
+	resp := wrapper(constructDeleteRequestOpts)(nil, &ExtraOption{
+		Resource: consts.L7POLICY,
+		ResourceLocation: urlSuffix})
+	defer fasthttp.ReleaseResponse(resp)
+
+	var l7ps entity.L7Policies
+	_ = json.Unmarshal(resp.Body(), &l7ps)
+	log.Println("==============List l7 policies success, there had", len(l7ps.L7Ps))
+	return l7ps
+}
+
+func (s *Controller) makeSureL7PolicyActive(l7PolicyId string) entity.L7PolicyMap {
+	l7Policy := s.getL7Policy(l7PolicyId)
+
+	for l7Policy.L7Policy.ProvisioningStatus != consts.ACTIVE {
+		time.Sleep(5 * time.Second)
+		l7Policy = s.getL7Policy(l7PolicyId)
+	}
+	return l7Policy
+}
+
+func (s *Controller) DeleteL7Policies() {
+	l7policies := s.ListL7Policies()
+	ch := s.MakeDeleteChannel(consts.L7POLICY, len(l7policies.L7Ps))
+	for _, l7policy := range l7policies.L7Ps {
+		temp := l7policy
+		go func() {
+			ch <- s.deleteL7Policy(temp.Id)
+		}()
+	}
+
+	if len(ch) != cap(ch) {
+		for len(ch) != cap(ch) {}
+	}
+	log.Println("L7 policies were deleted completely")
+}
+
+// L7 rule
+
+func (s *Controller) CreateL7Rule(policyId string, opts entity.CreateUpdateOptions) string {
+	urlSuffix := fmt.Sprintf("lbaas/l7policies/%s/rules", policyId)
+	resp := wrapper(constructCreateL7RuleRequestOpts)(opts, &ExtraOption{
+		ResourceLocation: urlSuffix})
+	defer fasthttp.ReleaseResponse(resp)
+
+	var l7Rule entity.L7RuleMap
+	_ = json.Unmarshal(resp.Body(), &l7Rule)
+
+	log.Println("==============create l7Rule success", l7Rule.Rule.Id)
+	return l7Rule.Rule.Id
+}
+
+func (s *Controller) deleteL7Rule(l7PolicyId, l7RuleId string) Output {
+	outputObj := Output{ParametersMap: map[string]string{"l7Rule_id": l7RuleId}}
+	defer func() {
+		if err := recover(); err != nil {
+			log.Println("catch error：", err)
+			outputObj.Success = false
+		}
+	}()
+
+	urlSuffix := fmt.Sprintf("lbaas/l7policies/%s/rules/%s", l7PolicyId, l7RuleId)
+	resp := wrapper(constructDeleteRequestOpts)(nil, &ExtraOption{
+		Resource: consts.L7RULE,
+		ResourceLocation: urlSuffix})
+	defer fasthttp.ReleaseResponse(resp)
+
+	if resp.StatusCode() == fasthttp.StatusOK {
+		outputObj.Success = true
+	}
+	outputObj.Response = resp
+	return outputObj
+}
+
+func (s *Controller) getL7Rule(l7PolicyId, l7RuleId string) entity.L7RuleMap {
+	urlSuffix := fmt.Sprintf("lbaas/l7policies/%s/rules/%s", l7PolicyId, l7RuleId)
+	resp := wrapper(constructListRequestOpts)(nil, &ExtraOption{
+		Resource: consts.L7RULE,
+		ResourceLocation: urlSuffix})
+	defer fasthttp.ReleaseResponse(resp)
+
+	var l7Rule entity.L7RuleMap
+	_ = json.Unmarshal(resp.Body(), &l7Rule)
+	return l7Rule
+}
+
+func (s *Controller) DeleteL7Rules() {
+	l7policies := s.ListL7Policies()
+	var ruleNumber int
+	for _, policy := range l7policies.L7Ps {
+		ruleNumber += len(policy.Rules)
+	}
+	ch := s.MakeDeleteChannel(consts.L7RULE, ruleNumber)
+	for _, l7policy := range l7policies.L7Ps {
+		tempPolicy := l7policy
+		for _, rule := range l7policy.Rules {
+			temp := rule
+			go func() {
+				ch <- s.deleteL7Rule(tempPolicy.Id, temp.Id)
+			}()
+		}
+	}
+
+	if len(ch) != cap(ch) {
+		for len(ch) != cap(ch) {
+		}
+	}
+	log.Println("L7 rules were deleted completely")
+}
+
+// image
+
+func (s *Controller) CreateImage(opts entity.CreateUpdateOptions) string {
+	createSuffix := "/images"
+	resp := wrapper(constructCreateImageRequestOpts)(opts, &ExtraOption{
+		ResourceLocation: createSuffix})
+	defer fasthttp.ReleaseResponse(resp)
+
+	var image entity.ImageMap
+	_ = json.Unmarshal(resp.Body(), &image)
+	log.Println("==============Create image success", image.Id)
+	return image.Id
+}
+
+func (s *Controller) GetImage(imageId string) entity.ImageMap {
+	suffix := fmt.Sprintf("/images/%s", imageId)
+	resp := wrapper(constructListRequestOpts)(nil, &ExtraOption{
+		Resource: consts.Image,
+		ResourceLocation: suffix})
+	defer fasthttp.ReleaseResponse(resp)
+
+	var image entity.ImageMap
+	_ = json.Unmarshal(resp.Body(), &image)
+	log.Println("==============Get image success")
+	return image
+}
+
+func (s *Controller) GetImages() entity.Images {
+	suffix := fmt.Sprintf("/images?project_id=%s", s.projectID)
+	resp := wrapper(constructCreateImageRequestOpts)(nil, &ExtraOption{
+		Resource: consts.Image,
+		ResourceLocation: suffix})
+	defer fasthttp.ReleaseResponse(resp)
+
+	var images entity.Images
+	_ = json.Unmarshal(resp.Body(), &images)
+	log.Println("==============List image success", images.Is)
+	return images
+}
+
+
+func (s *Controller) DeleteImage(imageId string) {
+	urlSuffix := "/images/" + imageId
+	resp := wrapper(constructDeleteRequestOpts)(nil, &ExtraOption{
+		Resource: consts.Image,
+		ResourceLocation: urlSuffix})
+	defer fasthttp.ReleaseResponse(resp)
+}
+
+func (s *Controller) DeleteImages() {
+	images := s.GetImages()
+	for _, image := range images.Is {
+		s.DeleteImage(image.Id)
+	}
 }

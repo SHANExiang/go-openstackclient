@@ -167,7 +167,7 @@ func constructDeleteRequestOpts(opts entity.CreateUpdateOptions, extraOpts *Extr
 func constructVolumeTypeRequestOpts(opts entity.CreateUpdateOptions, extraOpts *ExtraOption) RequestOption {
 	return RequestOption{
 		Action: CREATE,
-		Resource: consts.VOLUME,
+		Resource: consts.VOLUMETYPE,
 		ResourceLocation: extraOpts.ResourceLocation,
 		RequestSuffix: extraOpts.ResourceSuffix,
 		Body: opts,
@@ -207,3 +207,98 @@ func constructBandwidthLimitRuleRequestOpts(opts entity.CreateUpdateOptions, ext
 		Headers: map[string]string{consts.AuthToken: defaultController.Token()},
 	}
 }
+
+func constructCreateLoadBalancerRequestOpts(opts entity.CreateUpdateOptions, extraOption *ExtraOption) RequestOption {
+	return RequestOption{
+		Action: CREATE,
+		Resource: consts.LOADBALANCER,
+		ResourceLocation: extraOption.ResourceLocation,
+		RequestSuffix: "",
+		Body: opts,
+		Headers: map[string]string{consts.AuthToken: defaultController.Token()},
+	}
+}
+
+
+func constructCreateListenerRequestOpts(opts entity.CreateUpdateOptions, extraOption *ExtraOption) RequestOption {
+	return RequestOption{
+		Action: CREATE,
+		Resource: consts.LISTENER,
+		ResourceLocation: extraOption.ResourceLocation,
+		RequestSuffix: "",
+		Body: opts,
+		Headers: map[string]string{consts.AuthToken: defaultController.Token()},
+	}
+}
+
+
+func constructCreatePoolRequestOpts(opts entity.CreateUpdateOptions, extraOption *ExtraOption) RequestOption {
+	return RequestOption{
+		Action: CREATE,
+		Resource: consts.POOL,
+		ResourceLocation: extraOption.ResourceLocation,
+		RequestSuffix: "",
+		Body: opts,
+		Headers: map[string]string{consts.AuthToken: defaultController.Token()},
+	}
+}
+
+
+func constructCreatePoolMemberRequestOpts(opts entity.CreateUpdateOptions, extraOption *ExtraOption) RequestOption {
+	return RequestOption{
+		Action: CREATE,
+		Resource: consts.MEMBER,
+		ResourceLocation: extraOption.ResourceLocation,
+		RequestSuffix: "",
+		Body: opts,
+		Headers: map[string]string{consts.AuthToken: defaultController.Token()},
+	}
+}
+
+func constructCreateHealthMonitorRequestOpts(opts entity.CreateUpdateOptions, extraOption *ExtraOption) RequestOption {
+	return RequestOption{
+		Action: CREATE,
+		Resource: consts.HEALTHMONITOR,
+		ResourceLocation: extraOption.ResourceLocation,
+		RequestSuffix: "",
+		Body: opts,
+		Headers: map[string]string{consts.AuthToken: defaultController.Token()},
+	}
+}
+
+
+func constructCreateL7PolicyRequestOpts(opts entity.CreateUpdateOptions, extraOption *ExtraOption) RequestOption {
+	return RequestOption{
+		Action: CREATE,
+		Resource: consts.L7POLICY,
+		ResourceLocation: extraOption.ResourceLocation,
+		RequestSuffix: "",
+		Body: opts,
+		Headers: map[string]string{consts.AuthToken: defaultController.Token()},
+	}
+}
+
+func constructCreateL7RuleRequestOpts(opts entity.CreateUpdateOptions, extraOption *ExtraOption) RequestOption {
+	return RequestOption{
+		Action: CREATE,
+		Resource: consts.L7RULE,
+		ResourceLocation: extraOption.ResourceLocation,
+		RequestSuffix: "",
+		Body: opts,
+		Headers: map[string]string{consts.AuthToken: defaultController.Token()},
+	}
+}
+
+
+func constructCreateImageRequestOpts(opts entity.CreateUpdateOptions, extraOption *ExtraOption) RequestOption {
+	return RequestOption{
+		Action: CREATE,
+		Resource: consts.Image,
+		ResourceLocation: extraOption.ResourceLocation,
+		RequestSuffix: "",
+		Body: opts,
+		Headers: map[string]string{consts.AuthToken: defaultController.Token()},
+	}
+}
+
+
