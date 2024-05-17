@@ -220,7 +220,7 @@ func (s *Controller) CreateNetwork(opts entity.CreateUpdateOptions) entity.Netwo
 func (s *Controller) ListNetworks() entity.Networks {
 	var urlSuffix = ""
 	if s.projectName != consts.ADMIN {
-		urlSuffix = fmt.Sprintf("project_id=%s", s.projectID)
+		urlSuffix = fmt.Sprintf("project_id=%s", s.Project())
 	}
 	resp := wrapper(constructListRequestOpts)(nil, &ExtraOption{
 		Resource: consts.NETWORK, ResourceLocation: consts.NETWORKS,
@@ -347,7 +347,7 @@ func (s *Controller) CreateSecurityGroup(opts entity.CreateUpdateOptions) entity
 	_ = json.Unmarshal(res.Body(), &sg)
 
 	log.Println("==============Create security group success", sg.Id)
-	return sg.Id
+	return sg
 }
 
 
@@ -725,7 +725,7 @@ func (s *Controller) DeleteRouterGateways() {
 	for _, router := range routers.Rs {
 		if !reflect.DeepEqual(router.GatewayInfo, nil) {
 			go func() {
-				ch <- s.ClearRouterGateway(router.Id, router.GatewayInfs.NetworkID)
+				ch <- s.ClearRouterGateway(router.Id, router.GatewayInfo.NetworkID)
 			}()
 		}
 	}

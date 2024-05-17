@@ -9,14 +9,19 @@ import (
 )
 
 var (
-	defaultController = Controller{}
 	defaultName       = "sdn_test"
+	defaultController = NewController(defaultName)
 )
 
 func CreateNetworkHelper() string {
 	defaultOpts := defaultNetworkOpts()
     network := defaultController.CreateNetwork(defaultOpts)
 	return network.Id
+}
+
+func ListNetworkHelper() entity.Networks {
+	networks := defaultController.ListNetworks()
+	return networks
 }
 
 func CreateSubnetHelper(networkId string) string {

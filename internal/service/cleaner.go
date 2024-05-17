@@ -2,7 +2,6 @@ package service
 
 import (
 	"go-openstackclient/consts"
-	"go-openstackclient/internal"
 	"go-openstackclient/utils"
 	"log"
 	"reflect"
@@ -129,8 +128,8 @@ func (p *ProjectRunner) Run(wg *sync.WaitGroup) {
 	log.Printf("@@@@@@@@@@@@@@@Clean project %s completed", p.projectName)
 }
 
-func mergeMaps(map1, map2 map[string]chan internal.Output) map[string]chan internal.Output {
-	mergedMap := make(map[string]chan internal.Output)
+func mergeMaps(map1, map2 map[string]chan Output) map[string]chan Output {
+	mergedMap := make(map[string]chan Output)
 
 	for key, value := range map1 {
 		mergedMap[key] = value
